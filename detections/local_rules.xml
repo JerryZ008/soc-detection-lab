@@ -1,0 +1,58 @@
+<!--
+  Custom Wazuh detection rules - Enterprise SOC lab (trimmed / Apple-Silicon build).
+
+  Deploy to: /var/ossec/etc/rules/local_rules.xml on the Wazuh manager, then:
+     systemctl restart wazuh-manager
+     /var/ossec/bin/wazuh-logtest      # feed a sample sequence to confirm a rule fires
+
+  Rule IDs 100000-120000 are the user-reserved range. This lab uses 1001xx.
+
+  Parent rules this file builds on (Wazuh 4.14 shipped ruleset):
+     5760  = sshd: authentication failed
+     5763  = sshd: brute force trying to get access to the system   (level 10)
+     5715  = sshd: authentication success                            (level 3)
+
+  Scope note: this trimmed lab runs Linux only (Wazuh manager + Ubuntu target,
+  attacks from the manager host). Windows/AD/Sysmon detections are out of scope
+  here and intentionally omitted - see README for why (Apple M1 / 16 GB constraints).
+-->
+
+<group name="local,syslog,sshd,">
+
+  <!-- Default example rule shipped by Wazuh (kept as-is). -->
+  <rule id="100001" level="5">
+    <if_sid>5716</if_sid>
+    <srcip>1.1.1.1</srcip>
+    <description>sshd: authentication failed from IP 1.1.1.1.</description>
+    <group>authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- =====================================================================
+       SOCLAB: Brute force FOLLOWED BY successful login = possible compromise
+       (triage/01-ssh-bruteforce.md)
+
+       Detection gap this closes: during the SSH brute force lab, Wazuh's shipped
+       ruleset raised the *attempts* loudly (5763 + 2502 + 5551, all level 10) but
+       the *successful* login that followed was only a level-3 5715 and produced no
+       high-severity alert - the actual compromise was near-invisible in the SIEM.
+
+       This rule correlates:  a 5763 (brute force)  THEN  a 5715 (auth success)
+       from the SAME source IP, within 120s  ->  level 12 alert.
+
+       Validated with wazuh-logtest (stateful): feeding 8+ "Failed password" lines
+       (triggers 5763) followed by an "Accepted password" line from the same srcip
+       fires rule 100101 at level 12. See triage/01 for the logtest transcript.
+       ===================================================================== -->
+  <rule id="100101" level="12" timeframe="120">
+    <if_sid>5715</if_sid>
+    <if_matched_sid>5763</if_matched_sid>
+    <same_srcip />
+    <description>Brute force followed by successful login - possible compromise</description>
+    <mitre>
+      <id>T1110.001</id>   <!-- Brute Force: Password Guessing -->
+      <id>T1078</id>       <!-- Valid Accounts -->
+    </mitre>
+    <group>authentication_success,soclab,</group>
+  </rule>
+
+</group>
